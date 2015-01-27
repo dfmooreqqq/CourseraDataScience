@@ -1,0 +1,137 @@
+---
+title: "Predictions of Exercise Method"
+author: "Daniel F. Moore"
+date: "Wednesday, September 17, 2014"
+output:
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+## Purpose and Summary
+The purpose of this analysis is to use the data from accelerometers on the belt, forearm, arm, and dumbbell to predict _how the exercise was done_ (sitting-down, standing-up, standing, walking, and sitting). This is the _classe_ variable in the data set and are coded A, B, C, D, and E.
+
+In summary, we built models using random forest and boosting and compared the results of the two. Though close, the random forest had a better accuracy and was used for prediction on the testing set.
+
+## Initial Data Setup
+First, we need to set up the R environment with the right libraries and make sure that the data is in a good format for developing and applying models.
+
+### Setting up R
+```{r Setup R environment, echo=TRUE}
+#setwd("C:\\Users\\Daniel\\Documents\\GitHub\\PML_CourseProject")
+setwd("C:\\Users\\damoore\\Documents\\GitHub\\PML_CourseProject")
+suppressWarnings(suppressMessages(library(caret)));suppressWarnings(suppressMessages(library(Hmisc)));suppressWarnings(suppressMessages(library(plyr))); suppressWarnings(suppressMessages(library(data.table))); suppressWarnings(suppressMessages(library(randomForest)));suppressWarnings(suppressMessages(library(gbm))); suppressWarnings(suppressMessages(library(parallel)));
+
+```
+
+### Loading and Adjusting the Data Set
+First, we need to load the data and set up the training set. According to the paper which describes this dataset (http://groupware.les.inf.puc-rio.br/har), they use a sliding window approach to detect and separate each movement measurements. Then the statistcs (mean, variance, skiness..) of measuremets in this window are calculated and stored in rows with new-window = yes value. Therefore, my first step is to filter out these records from the original dataset, followed by steps removing unneeded columns -  time stamp, record-id, new-window, num-window and user-name.
+
+```{r Load and setup training data, echo=TRUE}
+pml_training<-read.csv("pml-training.csv")
+pml_testing<-read.csv("pml-testing.csv")
+pml_training<-pml_training[pml_training$new_window=="yes",]
+pml_training<-as.data.table(pml_training)
+pml_training <- pml_training[, c("X", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window", "user_name") := NULL]
+# Convert columns to numeric that should be
+pml_training<-pml_training[, lapply(.SD, as.numeric), by=c("classe")]
+pml_training$classe<-as.factor(pml_training$classe)
+
+```
+
+### Dividing the Training Set and Preprocessing
+In order to build and verify the model that we are going to build, we need to divide the training set into a training and model testing set. We're going to use 70% of the data in the training set for training the model and 30% for testing it before we determine which model is best.
+I'm also concerned about columns with near zero variance and that these will not help with machine learning models (or any models), so I'll find and remove those with the "nearZeroVar" function
+
+```{r Split Training Set , echo=TRUE}
+split_indices <- createDataPartition(pml_training$classe, p=0.7)
+pml_training_train<-pml_training[split_indices$Resample1]
+pml_training_test<-pml_training[-split_indices$Resample1]
+
+nearzerovar<-nearZeroVar(pml_training_train, saveMetrics=TRUE)
+pml_training_train<-pml_training_train[,!nearzerovar$nzv, with = FALSE] #with = FALSE lets me select column names dynamically
+pml_training_test<-pml_training_test[,!nearzerovar$nzv, with = FALSE]
+```
+
+Now I'll impute the missing values by preprocessing the data using k-nearest neighbors. Default is k=5. I'm going to use BoxCox, KNN, PCA, as well as center and scale.
+
+```{r impute missing values, echo=TRUE}
+# First separate the classe variable
+pml_training_train_classe<-pml_training_train$classe
+pml_training_test_classe<-pml_training_test$classe
+preprocessed_train<-preProcess(pml_training_train[,-1, with = FALSE], method=c("BoxCox", "center", "scale", "knnImpute", "pca"), thresh = 0.95, k=5)
+pml_training_train<-predict(preprocessed_train, newdata=pml_training_train[, -1, with = FALSE])
+pml_training_test<-predict(preprocessed_train, newdata=pml_training_test[, -1, with = FALSE])
+
+```
+
+## Model Building (Random Forest and Boosting)
+We're going to try two different methods for building machine learning models - Random Forest and Bootstrap. These two methods are both good for dealing with messy data as well as weeding through extraneous predictors. We have no assumptions that the response has a linear (or even smooth) relationship with the predictors. The idea behind Random Forests is that we use Bootstrapped samples, and at each split we bootstrap the variables. This grows the multiple trees and vote between them. The idea behind Boosting is that we can take a lot of potentially weak predictors, combine them together while weighing them, and create a stronger predictor. Boosting and RF are usually the top two performing algorithms for predictions.
+
+For each model, we are applying `10-fold cross validation` with `10 repetitions` on the training portion of the training data set. The model with the highest accuracy on the testing portion of the training data set will be chosen as the final model.
+
+### Random Forest
+In this section, we will create random forest models. The result averages *500* different trees that are grown. We only have one parameter (mtry), which represents the number of variables that are going to be randomly sampled as candidates at each split. We are varying mtry from 1 to 10.
+
+```{r Do RF, echo=TRUE}
+rf_control<-trainControl(method="repeatedcv", number=10, repeats=10)
+rf_grid<-expand.grid(mtry=1:10)
+rf_model<-train(pml_training_train, pml_training_train_classe, method="rf", trControl=rf_control, tuneGrid=rf_grid, metric="Accuracy")
+```
+
+Now that we've trained the model, let's look at the accuracy of the best models by the # of randomly selected predictors. Also shown is the result of the best model on the testing portion of the training data set - the confusion matrix and accuracy table.
+
+```{r, echo=TRUE}
+plot(rf_model)
+rf_testing_classe<-predict(rf_model, newdata=pml_training_test)
+rf_confusion<-confusionMatrix(rf_testing_classe, pml_training_test_classe)
+rf_confusion$table
+```
+
+### Boosting
+In this section, we will create models using the gradient boosting methodology. Here, the parameter for model building is the maximum depth of variable interactions that are considered (interaction.depth). We try the range of 2 to 6. The number of trees (n.tree) ranges from 30 to 270. This upper limit of 270 was chosen after seeing most models converge before then. To prevent overfitting, we use a shrinkage parameter of 0.2.
+
+```{r Do Boost, echo=TRUE}
+boost_control<- trainControl(method="repeatedcv", number=10, repeats=10)
+boost_grid<- expand.grid(interaction.depth = c(2,3,4,5,6), n.trees=1:30*9, shrinkage = 0.2)
+boost_model<- train(pml_training_train, pml_training_train_classe, method="gbm", trControl = boost_control, tuneGrid = boost_grid, metric="Accuracy", verbose=FALSE)
+
+```
+
+Again, now that we've trained the model, let's look at the accuracy of the best models by the # of boosting iterations. Also shown is the result of the best model on the testing portion of the training data set - the confusion matrix and accuracy table.
+
+```{r, echo=TRUE}
+plot(boost_model)
+boost_testing_classe<-predict(boost_model, newdata=pml_training_test)
+boost_confusion<-confusionMatrix(boost_testing_classe, pml_training_test_classe)
+boost_confusion$table
+```
+
+### Comparison of models
+Now, we'll compare the models. As you can see, the RF model is slightly more accurate than the boost model.
+
+```{r Compare Models, echo=TRUE}
+comparison<-as.data.frame(rbind(rf_model=rf_confusion$overall, boost_model=boost_confusion$overall))
+t(comparison)
+```
+
+## Applying the selected model to the test data set.
+We're now ready to apply the selected model to the test data set.
+First, we have to apply the same transformations that we applied to the training data set.
+
+```{r Transform Test Data Set, echo=TRUE}
+pml_testing<-as.data.table(pml_testing)
+pml_testing <- pml_testing[, c("X", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window", "user_name") := NULL]
+# Convert columns to numeric that should be
+pml_testing<-pml_testing[, lapply(.SD, as.numeric), by=c("problem_id")]
+pml_testing<-pml_testing[,!nearzerovar$nzv, with = FALSE]
+pml_testing_id<-pml_testing$problem_id
+```
+
+And now we can apply the model and look at the distribution of the predicted results
+
+```{r Apply the model, echo=TRUE}
+pml_testing_preprocessed<- predict(preprocessed_train, newdata=pml_testing[,-1,with=FALSE])
+pml_testing_submit_classe<- predict(rf_model, newdata=pml_testing_preprocessed)
+qplot(pml_testing_submit_classe)
+```

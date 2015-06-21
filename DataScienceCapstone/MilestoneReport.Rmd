@@ -1,0 +1,211 @@
+---
+title: "Capstone Project - Milestone Report"
+author: "Daniel F. Moore"
+date: "Monday, November 10, 2014"
+output:
+  html_document:
+    theme: cerulean
+    toc: yes
+---
+
+#Summary
+
+The goal of this document is to show the data acqusition, summary statistics about the data sets, exploratory analysis, and outline plans for the text prediction algorithm and Shiny app that is the final product.
+
+## Load packages
+```{r Load Packages and setwd, echo=TRUE, warning=FALSE}
+#load some libraries
+library(plyr)
+library(reshape2)
+library(tm) #Text mining
+library(SnowballC) #Provides wordStem()
+library(RColorBrewer) #color palette
+library(ggplot2)
+library(magrittr)
+library(Rgraphviz) #from bioconductor 0 install via - source("http://bioconductor.org/biocLite.R");biocLite("Rgraphviz")
+library(wordcloud)
+library(RWeka) # for doing the bigrams
+## Reading in as a corpus
+workingdir<-paste("C:\\Users", Sys.getenv("USERNAME"), "Documents\\GitHub\\DataScienceCapstone", sep = "\\")
+setwd(workingdir)
+```
+
+The basic acquiring, importing, and cleaning of the data involves several steps.
+
+1. Load and Subset the data - The data is imported into R in a format that makes text mining and analysis possible. In this case, we are using a Corpus to combine the English data from news sites, blogs, and twitter as contained in the Swiftkey data set.
+2. Tidy up the text - The data is cleaned up of punctuation, made all lower case, numbers are removed, and swear words are removed.
+3. Transform data into structured format - The data is transformed into the structured format that will actually be computed with - for this task, we use a _document-term matrix_.
+
+Then, finally, we will get a first look at the data.
+
+To begin, let's load the data up and we'll sample it down - it's way to big to use the whole dataset in our analysis
+
+# Load, Tidy, and Structure the Data
+
+## Load Data and Subset it
+```{r Load and Sample Data, echo=TRUE, warning=FALSE}
+
+cname<-file.path(".", "final", "en_US")
+
+sparsity<-0.2
+docs<- Corpus(DirSource(cname))
+
+print("Blog file stats: ")
+print(paste("Length:",as.character(length(docs[[1]]$content)), sep=" "))
+print(paste("Sample data:",as.character(head(docs[[1]]$content,1)), sep=" "))
+
+print("News file stats: ")
+print(paste("Length:",as.character(length(docs[[2]]$content)), sep=" "))
+print(paste("Sample data:",as.character(head(docs[[2]]$content,1)), sep=" "))
+
+print("Twitter file stats: ")
+print(paste("Length:",as.character(length(docs[[3]]$content)), sep=" "))
+print(paste("Sample data:",as.character(head(docs[[3]]$content,1)), sep=" "))
+
+
+#sample docs first
+perc_sampling = 0.1
+docs[[1]]$content<-sample(docs[[1]]$content, length(docs[[1]]$content)*perc_sampling)
+docs[[2]]$content<-sample(docs[[2]]$content, length(docs[[2]]$content)*perc_sampling*5)
+docs[[3]]$content<-sample(docs[[3]]$content, length(docs[[3]]$content)*perc_sampling*0.4)
+```
+
+
+## Tidy the Text
+
+The next step is to tidy up the text. I'm using the *tm* package for text mining and tidying. We are going to do a few transformations including converting special characters (other than apostrophes and hyphens) into spaces, making everything lower case, removing numbers, removing other punctuation, and stripping out whitespace. I'm intentionally not removing stopwords, as we want to predict them, nor am I _stemming_ the words as I want to distinguish between different word endings. I am also removing a few swear words.
+```{r Tidy Text, echo=TRUE, warning=FALSE}
+toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x)) # create function that will let us convert things to a space
+toRemove <- content_transformer(function(x, pattern) gsub(pattern, "", x)) # create function that will let us remove characters - such as apostrophes
+docs<-tm_map(docs, toSpace, "/|@|\\|#~!@#$%^&*()_+:<>?,./;\"") # this will convert special characters (except apostrophe and hyphen) to a space in all the docs in the corpus
+docs<-tm_map(docs, content_transformer(tolower)) # lower case everything
+docs<-tm_map(docs, removeNumbers) # Remove the numbers
+docs<-tm_map(docs, removePunctuation) # Remove punctuation
+docs<-tm_map(docs, stripWhitespace) # Strip out the whitespace
+#docs<-tm_map(docs, stemDocument) # this will remove common word endings for English words, such as es, ed, and s, and ing
+#docs<-tm_map(docs, removeWords, stopwords("english")) # remove stopwords (do this because of exploration)
+docs<-tm_map(docs, removeWords, c("fuck", "shit", "cock", "ass")) #remove other words
+```
+
+
+## Structure the data
+
+The third step is to structure the data - and save it for further analysis (these three steps can take a *very long time*). As mentioned above, we're going to save the data in a corpus as a document term matrix. This is a matrix that is used to describe the frequency of terms that occur in document collections. We are going to create four different document term matrices. One has each single word as a term, the second has each bigram, the third has each trigram, and the fourth has each quadgram as a term. All of these are then saved in a corpus for saving and retrieving.
+
+```{r Structure and Save the data, echo=TRUE, warning=FALSE}
+corpus<-c()
+corpus$docs<-docs
+
+dtm<-DocumentTermMatrix(docs) ## This does the tokenizing
+corpus$dtmonegrams<-removeSparseTerms(dtm, sparsity)
+
+BigramTokenizer<-function(x) NGramTokenizer(x, Weka_control(min=2, max=2))
+dtm_bigram<-DocumentTermMatrix(docs, control=list(tokenize=BigramTokenizer))
+corpus$dtmbigrams<-removeSparseTerms(dtm_bigram, sparsity)
+
+TrigramTokenizer<-function(x) NGramTokenizer(x, Weka_control(min=3, max=3))
+dtm_trigram<-DocumentTermMatrix(docs, control=list(tokenize=TrigramTokenizer))
+corpus$dtmtrigrams<-removeSparseTerms(dtm_trigram, sparsity)
+
+quadgramTokenizer<-function(x) NGramTokenizer(x, Weka_control(min=4, max=4))
+dtm_quadgram<-DocumentTermMatrix(docs, control=list(tokenize=quadgramTokenizer))
+corpus$dtmquadgrams<-removeSparseTerms(dtm_quadgram, sparsity)
+
+saveRDS(corpus, file="corpus.rds")
+```
+
+# A First Look
+
+To get a first look at the data, let's look at each of the document term matrices in turn.
+
+## Mono-grams
+
+```{r Examine Data - 1grams, echo=TRUE, warning=FALSE}
+if(!exists("corpus")) corpus<-readRDS("corpus.rds") # if it isn't loaded, then read the corpus in
+dtm<-corpus$dtmonegrams
+dtm_bigram<-corpus$dtmbigrams
+dtm_trigram<-corpus$dtmtrigrams
+dtm_quadgram<-corpus$dtmquadgrams
+##Plot Word Frequencies
+freq<-sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+head(freq, 14)
+wf<-data.frame(word=names(freq), freq=freq)
+head(wf)
+subset(wf, freq>head(freq,20)[20]-1) %>%
+    ggplot(aes(word, freq)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+## Do word cloud
+set.seed(123)
+wordcloud(names(freq), freq, max.words=200, colors=brewer.pal(6, "Dark2"), rot.per=0.2)
+```
+
+## Bigrams
+
+```{r Examine Data - 2grams, echo=TRUE, warning=FALSE}
+##Plot Word freq_bigramuencies
+freq_bigram<-sort(colSums(as.matrix(dtm_bigram)), decreasing=TRUE)
+head(freq_bigram, 14)
+wf_bigram<-data.frame(word=names(freq_bigram), freq_bigram=freq_bigram)
+bigramsplit<-cbind(wf_bigram, colsplit(wf_bigram$word, " ", c("startstate", "endstate")))
+
+head(wf_bigram)
+subset(wf_bigram, freq_bigram>head(freq_bigram,20)[20]-1) %>%
+    ggplot(aes(word, freq_bigram)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+## Do word cloud
+set.seed(123)
+wordcloud(names(freq_bigram), freq_bigram, max.words=50, colors=brewer.pal(6, "Dark2"), rot.per=0.2)
+```
+
+## Trigrams
+
+```{r Examine Data - 3grams, echo=TRUE, warning=FALSE}
+##Plot Word freq_trigramuencies
+freq_trigram<-sort(colSums(as.matrix(dtm_trigram)), decreasing=TRUE)
+head(freq_trigram, 14)
+
+wf_trigram<-data.frame(word=names(freq_trigram), freq_trigram=freq_trigram)
+
+trigramsplit<-cbind(wf_trigram, colsplit(wf_trigram$word, " ", c("word1", "word2", "endstate")))
+trigramsplit$startstate<-paste(trigramsplit$word1, trigramsplit$word2, sep=" ")
+head(wf_trigram)
+
+subset(wf_trigram, freq_trigram>head(freq_trigram,20)[20]-1) %>%
+    ggplot(aes(word, freq_trigram)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+## Do word clouds
+set.seed(123)
+wordcloud(names(freq_trigram), freq_trigram, max.words=20, colors=brewer.pal(6, "Dark2"), rot.per=0.2)
+```
+
+## Quadgrams
+
+```{r Examine Data - 4grams, echo=TRUE, warning=FALSE}
+freq_quadgram<-sort(colSums(as.matrix(dtm_quadgram)), decreasing=TRUE)
+head(freq_quadgram, 14)
+
+wf_quadgram<-data.frame(word=names(freq_quadgram), freq_quadgram=freq_quadgram)
+quadgramsplit<-cbind(wf_quadgram, colsplit(wf_quadgram$word, " ", c("word1", "word2", "word3", "endstate")))
+quadgramsplit$startstate<-paste(quadgramsplit$word1, quadgramsplit$word2, quadgramsplit$word3, sep=" ")
+head(wf_quadgram)
+
+subset(wf_quadgram, freq_quadgram>head(freq_quadgram,20)[20]-1) %>%
+    ggplot(aes(word, freq_quadgram)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+## Do word clouds
+set.seed(123)
+wordcloud(names(freq_quadgram), freq_quadgram, max.words=20, colors=brewer.pal(6, "Dark2"), rot.per=0.2)
+```
+
+# Next Steps
+
+The next step is to build a model and application where, given a one, two, or three word phrase, the next word in the phrase will be predicted. For example, given the input phrase _"the end of"_, we want to return _"the"_ as the most likely fourth word in the phrase ("the end of the" is the most common reported quadgram that begins with the trigram "the end of").
+
+If an unrecognized 3 word phrase is put in, then the last two words will be used to see what the most common third word following those two is. If that two word phrase is unrecognized, then the last word will be used to see what the most common second word following that one word is. If none of the words are recognized, then the model will output the most common single word.

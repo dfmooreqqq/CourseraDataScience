@@ -1,0 +1,5 @@
+*.zip
+*.txt
+*.Rhistory
+*.rds
+splitswith0p8sparsity.rdata

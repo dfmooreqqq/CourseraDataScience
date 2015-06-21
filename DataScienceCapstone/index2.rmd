@@ -1,0 +1,127 @@
+---
+title: "Word Prediction Application"
+author: "Daniel F. Moore"
+date: "Friday, December 12, 2014"
+output: slidy_presentation
+---
+
+```{r to load data and prepare environment, echo=FALSE}
+## Task0-1
+
+#load some libraries
+suppressMessages(suppressWarnings(library(plyr)))
+suppressMessages(suppressWarnings(library(reshape2)))
+suppressMessages(suppressWarnings(library(tm))) #Text mining
+suppressMessages(suppressWarnings(library(SnowballC))) #Provides wordStem()))
+suppressMessages(suppressWarnings(library(RColorBrewer))) #color palette
+suppressMessages(suppressWarnings(library(ggplot2)))
+suppressMessages(suppressWarnings(library(magrittr)))
+suppressMessages(suppressWarnings(library(Rgraphviz))) 
+suppressMessages(suppressWarnings(library(wordcloud)))
+suppressMessages(suppressWarnings(library(RWeka)))
+
+## Reading in as a corpus
+
+workingdir<-paste("C:\\Users", Sys.getenv("USERNAME"), "Documents\\GitHub\\DataScienceCapstone", sep = "\\")
+setwd(workingdir)
+cname<-file.path(".", "final", "en_US")
+
+
+sparsity<-0.8
+
+docs<- Corpus(DirSource(cname))
+
+#sample docs first
+perc_sampling = 0.1
+docs[[1]]$content<-sample(docs[[1]]$content, length(docs[[1]]$content)*perc_sampling)
+docs[[2]]$content<-sample(docs[[2]]$content, length(docs[[2]]$content)*perc_sampling*5)
+docs[[3]]$content<-sample(docs[[3]]$content, length(docs[[3]]$content)*perc_sampling*0.4)
+
+toSpace <- content_transformer(function(x, pattern) gsub(pattern, " ", x)) # create function that will let us convert things to a space
+toRemove <- content_transformer(function(x, pattern) gsub(pattern, "", x)) # create function that will let us remove characters - such as apostrophes
+docs<-tm_map(docs, toSpace, "/|@|\\|#~!@#$%^&*()_+:<>?,./;\"") # this will convert special characters (except apostrophe and hyphen) to a space in all the docs in the corpus
+#docs<-tm_map(docs, toRemove, "'-") # this will remove apostrophes and hyphens
+docs<-tm_map(docs, content_transformer(tolower)) # lower case everything
+docs<-tm_map(docs, removeNumbers) # Remove the numbers
+docs<-tm_map(docs, removePunctuation) # Remove punctuation
+docs<-tm_map(docs, stripWhitespace) # Strip out the whitespace
+#docs<-tm_map(docs, stemDocument) # this will remove common word endings for English words, such as es, ed, and s, and ing
+
+#docs<-tm_map(docs, removeWords, stopwords("english")) # remove stopwords (do this because of exploration)
+docs<-tm_map(docs, removeWords, c("fuck", "shit", "cock", "ass")) #remove other words
+
+## Now, let's create our document term matrix
+
+dtm<-DocumentTermMatrix(docs) ## This does the tokenizing
+freq<-colSums(as.matrix(dtm))
+#length(freq)
+ord<-order(freq)
+#freq[tail(ord)] # most common terms
+```
+
+# Introduction
+The purpose of this application is to predict the next word that the user is going to type, based on the words entered in to the text box. As described, The Text Predictor is very easy to use.
+
+Simply type in the start of a phrase either 1, 2, or 3 words long and press "Go!". The predicted next word will appear on the right. For example, if you enter in "Georgia Institute of", the predicted word will be "technology".
+
+Be <i>patient</i> though! It takes a while to load!
+
+<a href="https://dfmoore.shinyapps.io/TextPredictor/">Let's try it out!</a>
+
+
+# A quick look at the data
+
+The source of data was from a collection of English language, US based blogs, Twitter accounts, and news feeds. This data was processed (tokenized) into n-grams of size 2, 3, and 4 words, after removing punctuation, capitalization, swear words, numeric characters, and excess whitespace.
+
+There are a lot of sparse words (that is, words that appear only once) and some very common words. Here is a graph showing the 20 most common 1-grams
+
+```{r show the histogram of 1-grams, echo=FALSE, fig.height=4}
+# Removing sparse terms
+
+#dtm<-removeSparseTerms(dtm, sparsity)
+#dim(dtm)
+freqs<-colSums(as.matrix(dtm))
+
+#findFreqTerms(dtm, lowfreq=500)
+#findFreqTerms(dtm, lowfreq=100)
+#plot(dtm, terms=findFreqTerms(dtm, lowfreq=500)[1:50], corThreshold=0.5)
+
+##Plot Word Frequencies
+freq<-sort(colSums(as.matrix(dtm)), decreasing=TRUE)
+#head(freq, 14)
+
+wf<-data.frame(word=names(freq), freq=freq)
+# head(wf)
+
+subset(wf, freq>head(freq,20)[20]-1) %>%
+    ggplot(aes(word, freq)) +
+    geom_bar(stat="identity") +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+
+```
+
+
+# How the model works
+First we clean up the input data by removing punctuation, extra whitespace, and special characters.
+
+If the n-gram is directly in the vocabulary of the model, then it will suggest the next word with the highest probability of occurence. The algorithm uses a modified Kneser-Ney Smoothing for the probability estimation. This allows for constructing the lower-order (backoff) model. 
+
+If there are no good fits, then we just return the most common word, adjusting for parts of speech.
+<img src="modelvisualization.jpg">
+
+
+```{r, echo=FALSE, fig.height=3}
+# qplot(WinorLoss, data=fullteamschedule[fullteamschedule$Year==currentSeason,], , xlab="Win or Loss", ylab="Total Number", fill=WinorLoss)
+```
+
+
+
+# Some Additional Thoughts
+
+<b>Details on modified KN</b> - For example, "Los Angeles" may be common, but "Angeles" only occurs after "Los". "Angeles" may get a high 1-gram probability, so absolute discounting will give a high probability to "Angeles"" appearing after new bigram histories. So KN smoothing gives "Angeles" a low 1gram probability because it only occurs after "Los", which the 2-gram model fits well.
+
+
+```{r, echo=FALSE, fig.height=3}
+# qplot(GameNo, Over500, data=fullteamschedule[fullteamschedule$Year==currentSeason,], , xlab="Game of Season", ylab="Number of games above or below .500", color=StreakNo) + geom_hline(aes(yintercept=0), colour="#990000", linetype="dashed")
+```

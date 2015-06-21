@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset='utf-8'>
+	<title>Word Prediction Application</title>
+	<meta name="description" content="Word Prediction Application">
+	<meta name="author" content="Daniel F. Moore">
+	<meta name="generator" content="slidify" />
+	
+	<!-- LOAD STYLE SHEETS -->
+	<link rel="stylesheet" href="libraries/frameworks/html5slides/default/styles.css">
+	<link rel="stylesheet" href="libraries/highlighters/highlight.js/css/tomorrow.css" />    
+</head>
+<body style='display: none'>
+	<section class='slides layout-regular template-regular'>
+     <article class="" id="slide-1" style="background:;">
+  <h3>Word Predictor!</h3>
+  <p><b>by Daniel Moore (12/14/2014)</b></p>
+
+</article>
+
+<article class="class" id="montreal" style="background:;">
+  <h3>Introduction</h3>
+  <p>The purpose of this application is to predict the next word that the user is going to type, based on the words entered in to the text box. As described, The Text Predictor is very easy to use.</p>
+
+<p>Simply type in the start of a phrase either 1, 2, or 3 words long and press &quot;Go!&quot;. The predicted next word will appear on the right. For example, if you enter in &quot;Georgia Institute of&quot;, the predicted word will be &quot;technology&quot;.</p>
+
+<p>Be <i>patient</i> though! It takes a while to load!</p>
+
+</article>
+
+<article class="class" id="id" style="background:;">
+  <h3>A quick look at the data</h3>
+  <p>The source of data was from a collection of English language, US based blogs, Twitter accounts, and news feeds. This data was processed (tokenized) into n-grams of size 2, 3, and 4 words, after removing punctuation, capitalization, swear words, numeric characters, and excess whitespace.</p>
+
+<p>There are a lot of sparse words (that is, words that appear only once) and some very common words. Here is a graph showing the 20 most common 1-grams</p>
+
+<p><img src="assets/fig/show%20the%20histogram%20of%201-grams-1.png" alt="plot of chunk show the histogram of 1-grams"> </p>
+
+</article>
+
+<article class="class" id="id" style="background:;">
+  <h3>How the model works</h3>
+  <p>First we clean up the input data by removing punctuation, extra whitespace, and special characters.</p>
+
+<p>If the n-gram is directly in the vocabulary of the model, then it will suggest the next word with the highest probability of occurence. The algorithm uses a modified Kneser-Key Smoothing for the probability estimation. This allows for constructing the lower-order (backoff) model. </p>
+
+<p>If there are no good fits, then we just return the most common word, adjusting for parts of speech.</p>
+
+</article>
+
+<article class="class" id="id" style="background:;">
+  <h3>Some Additional Thoughts</h3>
+  <p><b>Details on modified KN</b> - For example, &quot;Los Angeles&quot; may be common, but &quot;Angeles&quot; only occurs after &quot;Los&quot;. &quot;Angeles&quot; may get a high 1-gram probability, so absolute discounting will give a high probability to &quot;Angeles&quot;&quot; appearing after new bigram histories. So KN smoothing gives &quot;Angeles&quot; a low 1gram probability because it only occurs after &quot;Los&quot;, which the 2-gram model fits well.
+In this way we construct the backoff model..</p>
+
+</article>
+
+<article class="class" id="id" style="background:;">
+  <h3>Streak Analyzers</h3>
+  <p>Some years, teams are streakier than other years, they tend to have long stretches of winning and losing as opposed to more consistency. One way to see how <em>streaky</em> a team is during a season is to look at the length of streaks throughout the season, both as the season progresses, as in the first chart and as a distribution, as in the second chart. These charts give a quick overview of this (removing the most common case of streaks of length 1).</p>
+
+</article>
+
+  </section>
+</body>
+  <!-- LOAD JAVASCRIPTS  -->
+	<script src='libraries/frameworks/html5slides/default/slides.js'></script>
+	<!-- LOAD HIGHLIGHTER JS FILES -->
+	<script src="libraries/highlighters/highlight.js/highlight.pack.js"></script>
+	<script>hljs.initHighlightingOnLoad();</script>
+	<!-- DONE LOADING HIGHLIGHTER JS FILES -->
+	 
+	</html>

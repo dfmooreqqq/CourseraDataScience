@@ -1,0 +1,13 @@
+base
+plyr
+reshape2
+NLP
+tm
+SnowballC
+RColorBrewer
+ggplot2
+magrittr
+graph
+Rgraphviz
+wordcloud
+RWeka
